@@ -86,8 +86,8 @@ $('settingsBtn').addEventListener('click',()=>openModal('Your preferences','Adju
 $('notifyBtn').addEventListener('click',async()=>{if(!('Notification'in window)){showToast('This browser does not support notifications');return}try{const p=await Notification.requestPermission();if(p==='granted'){new Notification('DayFlow reminders enabled',{body:'You can receive gentle check-ins while this page is open.'});showToast('Browser notification permission enabled')}else showToast('Notifications were not enabled')}catch(e){showToast('Notifications need a supported browser context (HTTPS or localhost)')}});
 document.querySelectorAll('.nav button').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.nav button').forEach(n=>n.classList.remove('active'));b.classList.add('active');const view=b.dataset.view;const targets={home:null,routine:'routineCard',sleep:'sleepCard',water:'waterCard',insights:'insightsCard'};if(targets[view])$(targets[view]).scrollIntoView({behavior:'smooth',block:'center'});else window.scrollTo({top:0,behavior:'smooth'})}));
 // Configure these two values with the Supabase Project URL and publishable key.
-const SUPABASE_URL='PASTE_YOUR_SUPABASE_PROJECT_URL_HERE';
-const SUPABASE_PUBLISHABLE_KEY='PASTE_YOUR_SUPABASE_PUBLISHABLE_KEY_HERE';
+const SUPABASE_URL= 'https://isvtrrxqlbihitoxqecy.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY=''sb_publishable_wGLQTBc-HnRVgsIVKx81sw_NF7fwu9r;
 const cloudConfigured=!SUPABASE_URL.includes('PASTE_')&&!SUPABASE_PUBLISHABLE_KEY.includes('PASTE_');
 const cloud=cloudConfigured&&window.supabase?window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY):null;
 window.dayflowUser=null;let cloudSyncTimer=null,cloudLoading=false;
