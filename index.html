@@ -119,7 +119,97 @@ const cloud=cloudConfigured&&window.supabase?window.supabase.createClient(SUPABA
 window.dayflowUser=null;let cloudSyncTimer=null,cloudLoading=false;
 function setAuthUI(user){window.dayflowUser=user||null;$('googleSignInBtn').classList.toggle('hidden',!!user);$('signOutBtn').classList.toggle('hidden',!user);$('authStatus').textContent=user?`Signed in as ${user.email||'Google account'} · syncing enabled`:cloud?'Not signed in · changes stay on this device':'Add your Supabase project details to enable sign-in';}
 async function initAuth(){if(!cloud){setAuthUI(null);return} $('googleSignInBtn').addEventListener('click',async()=>{try{const {error}=await cloud.auth.signInWithOAuth({provider:'google',options:{redirectTo:window.location.href.split('#')[0]}});if(error)throw error}catch(e){showToast('Google sign-in failed: '+(e.message||'Please try again'))}});$('signOutBtn').addEventListener('click',async()=>{const {error}=await cloud.auth.signOut();if(error)showToast('Sign-out failed: '+error.message);else{setAuthUI(null);showToast('Signed out')}});const {data,error}=await cloud.auth.getSession();if(error){showToast('Could not check sign-in status');return}if(data.session)await handleCloudSession(data.session.user);cloud.auth.onAuthStateChange((_event,session)=>{if(session?.user){setTimeout(()=>handleCloudSession(session.user),0)}else setAuthUI(null)});}
-async function handleCloudSession(user){if(!user)return;cloudLoading=true;setAuthUI(user);try{const {data:daily,error:dailyError}=await cloud.from('daily_records').select('*').eq('user_id',user.id).eq('record_date',new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10)).maybeSingle();if(dailyError)throw dailyError;const {data:habits,error:habitsError}=await cloud.from('habits').select('*').eq('user_id',user.id).eq('is_active',true).order('created_at');if(habitsError)throw habitsError;const habitIds=(habits||[]).map(h=>h.id);let logs=[];if(habitIds.length){const {data,error}=await cloud.from('habit_logs').select('*').eq('user_id',user.id).eq('log_date',new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10)).in('habit_id',habitIds);if(error)throw error;logs=data||[]}if(daily||habits?.length){state={...structuredClone(defaults),water:daily?.water_ml??0,waterGoal:state.waterGoal||2000,sleepGoal:state.sleepGoal||8,bed:daily?.bedtime||'22:45',wake:daily?.wake_time||'06:15',quality:daily?.sleep_quality??3,tasks:(habits||[]).map((h,i)=>({id:h.id,title:h.name,time:'Anytime',done:!!logs.find(l=>l.habit_id===h.id)?.completed,cloudId:h.id})),history:Array(7).fill(0),waterLog:[]};}else{state={...structuredClone(defaults),water:0,tasks:[],history:Array(7).fill(0),waterLog:[]};}render();$('authStatus').textContent=`Signed in as ${user.email||'Google account'} · synced to Supabase`;showToast('Your DayFlow data is ready')}catch(e){showToast('Could not load cloud data: '+(e.message||'Check your Supabase setup'));$('authStatus').textContent='Signed in, but data sync needs attention'}finally{cloudLoading=false}}
+
+async function handleCloudSession(user) {
+  if (!user) return;
+  cloudLoading = true;
+  setAuthUI(user);
+
+  try {
+    const today = new Date(
+      Date.now() - new Date().getTimezoneOffset() * 60000
+    ).toISOString().slice(0, 10);
+
+    const { data: daily, error: dailyError } = await cloud
+      .from('daily_records')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('record_date', today)
+      .maybeSingle();
+
+    if (dailyError) throw dailyError;
+
+    const { data: habits, error: habitsError } = await cloud
+      .from('habits')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+      .order('created_at');
+
+    if (habitsError) throw habitsError;
+
+    const habitIds = (habits || []).map(h => h.id);
+    let logs = [];
+
+    if (habitIds.length) {
+      const { data, error } = await cloud
+        .from('habit_logs')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('log_date', today)
+        .in('habit_id', habitIds);
+
+      if (error) throw error;
+      logs = data || [];
+    }
+
+    const { data: waterEntries, error: waterError } = await cloud
+      .from('water_logs')
+      .select('id, amount_ml, logged_at')
+      .eq('user_id', user.id)
+      .gte('logged_at', `${today}T00:00:00`)
+      .lt('logged_at', `${today}T23:59:59.999`)
+      .order('logged_at');
+
+    if (waterError) throw waterError;
+
+    const waterLog = (waterEntries || []).map(entry => ({
+      id: entry.id,
+      amount: entry.amount_ml,
+      at: entry.logged_at
+    }));
+
+    state = {
+      ...structuredClone(defaults),
+      water: daily?.water_ml ?? waterLog.reduce((sum, entry) => sum + entry.amount, 0),
+      waterGoal: state.waterGoal || 2000,
+      sleepGoal: state.sleepGoal || 8,
+      bed: daily?.bedtime || '22:45',
+      wake: daily?.wake_time || '06:15',
+      quality: daily?.sleep_quality ?? 3,
+      tasks: (habits || []).map(h => ({
+        id: h.id,
+        title: h.name,
+        time: 'Anytime',
+        done: !!logs.find(l => l.habit_id === h.id)?.completed,
+        cloudId: h.id
+      })),
+      history: Array(7).fill(0),
+      waterLog
+    };
+
+    render();
+    $('authStatus').textContent =
+      `Signed in as ${user.email || 'Google account'} · synced to Supabase`;
+    showToast('Your DayFlow data is ready');
+
+  } catch (e) {
+    showToast('Could not load cloud data: ' + (e.message || 'Check your Supabase setup'));
+    $('authStatus').textContent = 'Signed in, but data sync needs attention';
+  } finally {
+    cloudLoading = false;
+  }
+}
 function scheduleCloudSync(){if(!cloud||!window.dayflowUser||cloudLoading)return;clearTimeout(cloudSyncTimer);cloudSyncTimer=setTimeout(()=>syncCloudData().catch(e=>showToast('Cloud sync failed: '+(e.message||'Check your connection'))),700)}
 async function syncCloudData(){const user=window.dayflowUser;if(!cloud||!user||cloudLoading)return;const date=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);const {error:dailyError}=await cloud.from('daily_records').upsert({user_id:user.id,record_date:date,bedtime:state.bed,wake_time:state.wake,sleep_quality:state.quality,water_ml:state.water,updated_at:new Date().toISOString()},{onConflict:'user_id,record_date'});if(dailyError)throw dailyError;for(const task of state.tasks){let habitId=task.cloudId;if(!habitId){const {data,error}=await cloud.from('habits').insert({user_id:user.id,name:task.title,is_active:true}).select('id').single();if(error)throw error;habitId=data.id;task.cloudId=habitId;localStorage.setItem(KEY,JSON.stringify(state));}else{const {error}=await cloud.from('habits').update({name:task.title,is_active:true}).eq('id',habitId).eq('user_id',user.id);if(error)throw error;}const {error:logError}=await cloud.from('habit_logs').upsert({user_id:user.id,habit_id:habitId,log_date:date,completed:!!task.done,completed_at:task.done?new Date().toISOString():null},{onConflict:'habit_id,log_date'});if(logError)throw logError;}localStorage.setItem(KEY,JSON.stringify(state));$('authStatus').textContent=`Signed in as ${user.email||'Google account'} · all changes synced`;}
 render();
