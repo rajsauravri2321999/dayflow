@@ -220,8 +220,10 @@ window.dayflowUser=null;let cloudSyncTimer=null,cloudLoading=false;
 function setAuthUI(user){window.dayflowUser=user||null;$('googleSignInBtn').classList.toggle('hidden',!!user);$('signOutBtn').classList.toggle('hidden',!user);$('authStatus').textContent=user?`Signed in as ${user.email||'Google account'} · syncing enabled`:cloud?'Not signed in · changes stay on this device':'Add your Supabase project details to enable sign-in';}
 async function initAuth(){if(!cloud){setAuthUI(null);return} $('googleSignInBtn').addEventListener('click',async()=>{try{const {error}=await cloud.auth.signInWithOAuth({provider:'google',options:{redirectTo:window.location.href.split('#')[0]}});if(error)throw error}catch(e){showToast('Google sign-in failed: '+(e.message||'Please try again'))}});$('signOutBtn').addEventListener('click',async()=>{const {error}=await cloud.auth.signOut();if(error)showToast('Sign-out failed: '+error.message);else{setAuthUI(null);showToast('Signed out')}});const {data,error}=await cloud.auth.getSession();if(error){showToast('Could not check sign-in status');return}if(data.session)await handleCloudSession(data.session.user);cloud.auth.onAuthStateChange((_event,session)=>{if(session?.user){setTimeout(()=>handleCloudSession(session.user),0)}else setAuthUI(null)});}
 
+
 async function handleCloudSession(user) {
   if (!user) return;
+
   cloudLoading = true;
   setAuthUI(user);
 
@@ -267,8 +269,8 @@ async function handleCloudSession(user) {
       .from('water_logs')
       .select('id, amount_ml, logged_at')
       .eq('user_id', user.id)
-      .gte('logged_at', `${today}T00:00:00`)
-      .lt('logged_at', `${today}T23:59:59.999`)
+      .gte('logged_at', `${today}T00:00:00+05:30`)
+      .lt('logged_at', `${today}T23:59:59.999+05:30`)
       .order('logged_at');
 
     if (waterError) throw waterError;
@@ -281,7 +283,8 @@ async function handleCloudSession(user) {
 
     state = {
       ...structuredClone(defaults),
-      water: daily?.water_ml ?? waterLog.reduce((sum, entry) => sum + entry.amount, 0),
+      water: daily?.water_ml ??
+        waterLog.reduce((sum, entry) => sum + entry.amount, 0),
       waterGoal: state.waterGoal || 2000,
       sleepGoal: state.sleepGoal || 8,
       bed: daily?.bedtime || '22:45',
@@ -299,13 +302,19 @@ async function handleCloudSession(user) {
     };
 
     render();
+
     $('authStatus').textContent =
       `Signed in as ${user.email || 'Google account'} · synced to Supabase`;
+
     showToast('Your DayFlow data is ready');
 
   } catch (e) {
-    showToast('Could not load cloud data: ' + (e.message || 'Check your Supabase setup'));
-    $('authStatus').textContent = 'Signed in, but data sync needs attention';
+    showToast(
+      'Could not load cloud data: ' +
+      (e.message || 'Check your Supabase setup')
+    );
+    $('authStatus').textContent =
+      'Signed in, but data sync needs attention';
   } finally {
     cloudLoading = false;
   }
