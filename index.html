@@ -73,9 +73,109 @@ const labels=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];$('weekChart').innerHTM
 function openModal(title,desc,fields,onSave){$('modalTitle').textContent=title;$('modalDesc').textContent=desc;$('modalFields').innerHTML=fields;modalAction=onSave;$('modalBackdrop').classList.add('show')}
 function closeModal(){$('modalBackdrop').classList.remove('show');modalAction=null}
 $('cancelModal').addEventListener('click',closeModal);$('modalBackdrop').addEventListener('click',e=>{if(e.target===$('modalBackdrop'))closeModal()});$('saveModal').addEventListener('click',()=>{if(modalAction){const ok=modalAction();if(ok!==false){closeModal();render()}}});
-document.querySelectorAll('[data-water]').forEach(b=>b.addEventListener('click',()=>{const amount=Number(b.dataset.water);state.water+=amount;state.waterLog.push({amount,at:new Date().toISOString()});render();showToast(`Added ${amount} ml of water`)}));
-$('customWaterBtn').addEventListener('click',()=>openModal('Log water','Enter the amount you drank.',`<div class="formrow"><label for="customMl">Amount (ml)</label><input id="customMl" type="number" min="1" max="5000" value="200" required></div>`,()=>{const n=Number($('customMl').value);if(!Number.isFinite(n)||n<1||n>5000){showToast('Enter an amount between 1 and 5,000 ml');return false}state.water+=Math.round(n);state.waterLog.push({amount:Math.round(n),at:new Date().toISOString()});showToast(`Added ${Math.round(n)} ml`)}));
-$('undoWaterBtn').addEventListener('click',()=>{const last=state.waterLog.pop();if(!last){showToast('No recent water entry to undo');return}state.water=Math.max(0,state.water-last.amount);render();showToast('Last water entry undone')});
+async function saveWaterEntry(entry) {
+  const user = window.dayflowUser;
+  if (!cloud || !user) return;
+
+  const { error } = await cloud.from('water_logs').insert({
+    id: entry.id,
+    user_id: user.id,
+    amount_ml: entry.amount,
+    logged_at: entry.at
+  });
+
+  if (error) throw error;
+}
+
+// Quick water buttons
+document.querySelectorAll('[data-water]').forEach(b =>
+  b.addEventListener('click', () => {
+    const amount = Number(b.dataset.water);
+    const entry = {
+      id: crypto.randomUUID(),
+      amount,
+      at: new Date().toISOString()
+    };
+
+    state.water += amount;
+    state.waterLog.push(entry);
+    render();
+
+    saveWaterEntry(entry).catch(e =>
+      showToast('Water sync failed: ' + e.message)
+    );
+
+    showToast(`Added ${amount} ml of water`);
+  })
+);
+
+// Custom water entry
+$('customWaterBtn').addEventListener('click', () =>
+  openModal(
+    'Log water',
+    'Enter the amount you drank.',
+    `<div class="formrow">
+      <label for="customMl">Amount (ml)</label>
+      <input id="customMl" type="number" min="1" max="5000"
+        value="200" required>
+    </div>`,
+    () => {
+      const n = Number($('customMl').value);
+
+      if (!Number.isFinite(n) || n < 1 || n > 5000) {
+        showToast('Enter an amount between 1 and 5,000 ml');
+        return false;
+      }
+
+      const amount = Math.round(n);
+      const entry = {
+        id: crypto.randomUUID(),
+        amount,
+        at: new Date().toISOString()
+      };
+
+      state.water += amount;
+      state.waterLog.push(entry);
+
+      saveWaterEntry(entry).catch(e =>
+        showToast('Water sync failed: ' + e.message)
+      );
+
+      showToast(`Added ${amount} ml`);
+    }
+  )
+);
+
+// Undo the most recent water entry
+$('undoWaterBtn').addEventListener('click', async () => {
+  const last = state.waterLog[state.waterLog.length - 1];
+
+  if (!last) {
+    showToast('No recent water entry to undo');
+    return;
+  }
+
+  const user = window.dayflowUser;
+
+  if (cloud && user && last.id) {
+    const { error } = await cloud
+      .from('water_logs')
+      .delete()
+      .eq('id', last.id)
+      .eq('user_id', user.id);
+
+    if (error) {
+      showToast('Could not undo entry: ' + error.message);
+      return;
+    }
+  }
+
+  state.waterLog.pop();
+  state.water = Math.max(0, state.water - last.amount);
+
+  render();
+  showToast('Last water entry undone');
+});
 $('editSleepBtn').addEventListener('click',()=>openModal('Sleep details','Set the time you went to bed and woke up.',`<div class="formrow"><label for="bedInput">Bedtime</label><input id="bedInput" type="time" value="${state.bed}"></div><div class="formrow"><label for="wakeInput">Wake-up time</label><input id="wakeInput" type="time" value="${state.wake}"></div><div class="formrow"><label for="sleepGoalInput">Sleep goal (hours)</label><input id="sleepGoalInput" type="number" min="1" max="16" step="0.5" value="${state.sleepGoal}"></div><div class="formrow"><label for="qualityInput">Sleep quality</label><select id="qualityInput">${[1,2,3,4,5].map(n=>`<option value="${n}" ${state.quality===n?'selected':''}>${n} — ${{1:'Poor',2:'Fair',3:'Okay',4:'Good',5:'Excellent'}[n]}</option>`).join('')}</select></div>`,()=>{const bed=$('bedInput').value,wake=$('wakeInput').value,goal=Number($('sleepGoalInput').value);if(!bed||!wake||!goal||goal<1||goal>16){showToast('Please enter valid sleep details');return false}state.bed=bed;state.wake=wake;state.sleepGoal=goal;state.quality=Number($('qualityInput').value);showToast('Sleep details updated')}));
 $('addTaskForm').addEventListener('submit',e=>{e.preventDefault();const input=$('newTask'),title=input.value.trim();if(!title)return;if(state.tasks.length>=20){showToast('For this demo, keep up to 20 habits');return}state.tasks.push({id:Date.now(),title,time:'Anytime',done:false});input.value='';render();showToast('Habit added')});
 $('taskList').addEventListener('change',e=>{const id=e.target.dataset.task;if(!id)return;const task=state.tasks.find(t=>String(t.id)===id);if(task){task.done=e.target.checked;const today=new Date().getDay(),idx=(today+6)%7;state.history[idx]=Math.round(state.tasks.filter(t=>t.done).length/Math.max(1,state.tasks.length)*100);render();showToast(task.done?'Habit completed ✓':'Habit marked incomplete')}});
