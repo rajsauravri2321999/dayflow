@@ -320,7 +320,137 @@ async function handleCloudSession(user) {
   }
 }
 function scheduleCloudSync(){if(!cloud||!window.dayflowUser||cloudLoading)return;clearTimeout(cloudSyncTimer);cloudSyncTimer=setTimeout(()=>syncCloudData().catch(e=>showToast('Cloud sync failed: '+(e.message||'Check your connection'))),700)}
-async function syncCloudData(){const user=window.dayflowUser;if(!cloud||!user||cloudLoading)return;const date=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);const {error:dailyError}=await cloud.from('daily_records').upsert({user_id:user.id,record_date:date,bedtime:state.bed,wake_time:state.wake,sleep_quality:state.quality,water_ml:state.water,updated_at:new Date().toISOString()},{onConflict:'user_id,record_date'});if(dailyError)throw dailyError;for(const task of state.tasks){let habitId=task.cloudId;if(!habitId){const {data,error}=await cloud.from('habits').insert({user_id:user.id,name:task.title,is_active:true}).select('id').single();if(error)throw error;habitId=data.id;task.cloudId=habitId;localStorage.setItem(KEY,JSON.stringify(state));}else{const {error}=await cloud.from('habits').update({name:task.title,is_active:true}).eq('id',habitId).eq('user_id',user.id);if(error)throw error;}const {error:logError}=await cloud.from('habit_logs').upsert({user_id:user.id,habit_id:habitId,log_date:date,completed:!!task.done,completed_at:task.done?new Date().toISOString():null},{onConflict:'habit_id,log_date'});if(logError)throw logError;}localStorage.setItem(KEY,JSON.stringify(state));$('authStatus').textContent=`Signed in as ${user.email||'Google account'} · all changes synced`;}
+
+async function syncCloudData() {
+  const user = window.dayflowUser;
+  if (!cloud || !user || cloudLoading) return;
+
+  const date = new Date(
+    Date.now() - new Date().getTimezoneOffset() * 60000
+  ).toISOString().slice(0, 10);
+
+  // 1. Save the daily record.
+  const { error: dailyError } = await cloud
+    .from('daily_records')
+    .upsert({
+      user_id: user.id,
+      record_date: date,
+      bedtime: state.bed,
+      wake_time: state.wake,
+      sleep_quality: state.quality,
+      water_ml: state.water,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id,record_date' });
+
+  if (dailyError) throw dailyError;
+
+  // 2. Load today's individual water entries.
+  const start = new Date(`${date}T00:00:00+05:30`).toISOString();
+  const nextDate = new Date(
+    new Date(`${date}T00:00:00+05:30`).getTime() + 86400000
+  ).toISOString();
+
+  const { data: cloudWater, error: waterReadError } = await cloud
+    .from('water_logs')
+    .select('id, amount_ml, logged_at')
+    .eq('user_id', user.id)
+    .gte('logged_at', start)
+    .lt('logged_at', nextDate);
+
+  if (waterReadError) throw waterReadError;
+
+  // Match existing entries so repeated syncs don't create duplicates.
+  const unmatchedCloud = [...(cloudWater || [])];
+
+  for (const entry of (state.waterLog || [])) {
+    const amount = Number(entry.amount);
+    const entryTime = new Date(entry.at).getTime();
+
+    const matchIndex = unmatchedCloud.findIndex(row =>
+      Number(row.amount_ml) === amount &&
+      new Date(row.logged_at).getTime() === entryTime
+    );
+
+    if (matchIndex !== -1) {
+      unmatchedCloud.splice(matchIndex, 1);
+      continue;
+    }
+
+    // 3. Insert a water entry that isn't in the cloud yet.
+    const { error: waterInsertError } = await cloud
+      .from('water_logs')
+      .insert({
+        user_id: user.id,
+        amount_ml: amount,
+        logged_at: entry.at
+      });
+
+    if (waterInsertError) throw waterInsertError;
+  }
+
+  // 4. Delete cloud entries removed locally (for example, Undo).
+  if (unmatchedCloud.length) {
+    const ids = unmatchedCloud.map(row => row.id);
+
+    const { error: waterDeleteError } = await cloud
+      .from('water_logs')
+      .delete()
+      .eq('user_id', user.id)
+      .in('id', ids);
+
+    if (waterDeleteError) throw waterDeleteError;
+  }
+
+  // 5. Preserve existing habit synchronization.
+  for (const task of state.tasks) {
+    let habitId = task.cloudId;
+
+    if (!habitId) {
+      const { data, error } = await cloud
+        .from('habits')
+        .insert({
+          user_id: user.id,
+          name: task.title,
+          is_active: true
+        })
+        .select('id')
+        .single();
+
+      if (error) throw error;
+
+      habitId = data.id;
+      task.cloudId = habitId;
+    } else {
+      const { error } = await cloud
+        .from('habits')
+        .update({
+          name: task.title,
+          is_active: true
+        })
+        .eq('id', habitId)
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+    }
+
+    const { error: logError } = await cloud
+      .from('habit_logs')
+      .upsert({
+        user_id: user.id,
+        habit_id: habitId,
+        log_date: date,
+        completed: !!task.done,
+        completed_at: task.done ? new Date().toISOString() : null
+      }, { onConflict: 'habit_id,log_date' });
+
+    if (logError) throw logError;
+  }
+
+  localStorage.setItem(KEY, JSON.stringify(state));
+
+  $('authStatus').textContent =
+    `Signed in as ${user.email || 'Google account'} · all changes synced`;
+}
 render();
 initAuth();
 })();
