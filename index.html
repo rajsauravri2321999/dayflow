@@ -87,7 +87,7 @@ $('notifyBtn').addEventListener('click',async()=>{if(!('Notification'in window))
 document.querySelectorAll('.nav button').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.nav button').forEach(n=>n.classList.remove('active'));b.classList.add('active');const view=b.dataset.view;const targets={home:null,routine:'routineCard',sleep:'sleepCard',water:'waterCard',insights:'insightsCard'};if(targets[view])$(targets[view]).scrollIntoView({behavior:'smooth',block:'center'});else window.scrollTo({top:0,behavior:'smooth'})}));
 // Configure these two values with the Supabase Project URL and publishable key.
 const SUPABASE_URL= 'https://isvtrrxqlbihitoxqecy.supabase.co';
-const SUPABASE_PUBLISHABLE_KEY=''sb_publishable_wGLQTBc-HnRVgsIVKx81sw_NF7fwu9r;
+const SUPABASE_PUBLISHABLE_KEY='sb_publishable_wGLQTBc-HnRVgsIVKx81sw_NF7fwu9r';
 const cloudConfigured=!SUPABASE_URL.includes('PASTE_')&&!SUPABASE_PUBLISHABLE_KEY.includes('PASTE_');
 const cloud=cloudConfigured&&window.supabase?window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY):null;
 window.dayflowUser=null;let cloudSyncTimer=null,cloudLoading=false;
